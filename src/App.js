@@ -10,14 +10,14 @@ function App() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/conversations')
+    fetch('https://whatsapp-clone-2bgo.onrender.com/api/conversations')
       .then(res => res.json())
       .then(data => setConversations(data.filter(u => u.wa_id && u.name)));
   }, []);
 
   useEffect(() => {
     if (selected) {
-      fetch(`http://localhost:5000/api/messages/${selected}`)
+      fetch(`https://whatsapp-clone-2bgo.onrender.com/api/messages/${selected}`)
         .then(res => res.json())
         .then(msgs => setMessages(msgs));
       const u = conversations.find(u => u.wa_id === selected);
@@ -26,12 +26,12 @@ function App() {
   }, [selected, conversations]);
 
   const handleSend = async text => {
-    await fetch(`http://localhost:5000/api/messages/${selected}`, {
+    await fetch(`https://whatsapp-clone-2bgo.onrender.com/api/messages/${selected}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    fetch(`http://localhost:5000/api/messages/${selected}`)
+    fetch(`https://whatsapp-clone-2bgo.onrender.com/api/messages/${selected}`)
       .then(res => res.json())
       .then(msgs => setMessages(msgs));
   };
