@@ -1,3 +1,4 @@
+require('dotenv').config();
 // ...existing code...
 const express = require('express');
 const mongoose = require('mongoose');
@@ -10,13 +11,11 @@ app.use(bodyParser.json());
 // Enable CORS for all origins
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   next();
 });
 
 // MongoDB connection
-mongoose.connect('mongodb+srv://jayendramallla:BfHZ47RiEnHswA9i@cluster0.5q3ycy1.mongodb.net/whatsapp', {
+mongoose.connect(process.env.mongodb_url, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
@@ -61,13 +60,26 @@ app.post('/api/messages/:wa_id', async (req, res) => {
   res.json(msg);
 });
 
+// Helper to safely read and parse JSON
+function safeReadJSON(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (!content.trim()) return null;
+    return JSON.parse(content);
+  } catch (err) {
+    console.error(`Error reading ${filePath}:`, err.message);
+    return null;
+  }
+}
+
 // Payload processor: Read JSON files and insert/update messages
 app.post('/api/process-payloads', async (req, res) => {
   const payloadDir = path.join(__dirname, 'payloads');
   const files = fs.readdirSync(payloadDir).filter(f => f.endsWith('.json'));
   let inserted = 0, updated = 0;
   for (const file of files) {
-    const data = JSON.parse(fs.readFileSync(path.join(payloadDir, file)));
+    const data = safeReadJSON(path.join(payloadDir, file));
+    if (!data) continue;
     // WhatsApp webhook payloads
     if (data.payload_type === 'whatsapp_webhook' && data.metaData?.entry) {
       for (const entry of data.metaData.entry) {
@@ -76,28 +88,19 @@ app.post('/api/process-payloads', async (req, res) => {
             // Insert messages
             if (change.value?.messages) {
               for (const msgObj of change.value.messages) {
+                const wa_id = (change.value.contacts && change.value.contacts[0]?.wa_id) || '';
+                const name = (change.value.contacts && change.value.contacts[0]?.profile?.name) || '';
+                if (!wa_id || !name) continue; // Only insert valid users
                 const doc = {
-                  wa_id: (change.value.contacts && change.value.contacts[0]?.wa_id) || '',
-                  name: (change.value.contacts && change.value.contacts[0]?.profile?.name) || '',
+                  wa_id,
+                  name,
                   id: msgObj.id,
                   meta_msg_id: msgObj.id,
                   text: msgObj.text?.body || '',
                   timestamp: Number(msgObj.timestamp),
                   status: msgObj.status || 'sent',
                   fromMe: msgObj.fromMe || false,
-                  type: msgObj.type,
-                  payload_contacts: change.value.contacts,
-                  payload_metadata: change.value.metadata,
-                  payload_messaging_product: change.value.messaging_product,
-                  payload_entry_id: entry.id,
-                  payload_gs_app_id: data.metaData.gs_app_id,
-                  payload_object: data.metaData.object,
-                  payload_createdAt: data.createdAt,
-                  payload_startedAt: data.startedAt,
-                  payload_completedAt: data.completedAt,
-                  payload_executed: data.executed
                 };
-                console.log('Inserting message:', doc);
                 await Message.create(doc);
                 inserted++;
               }
@@ -108,11 +111,6 @@ app.post('/api/process-payloads', async (req, res) => {
                 const filter = statusObj.id ? { id: statusObj.id } : { meta_msg_id: statusObj.meta_msg_id };
                 const result = await Message.updateMany(filter, {
                   status: statusObj.status,
-                  status_conversation: statusObj.conversation,
-                  status_gs_id: statusObj.gs_id,
-                  status_pricing: statusObj.pricing,
-                  status_recipient_id: statusObj.recipient_id,
-                  status_timestamp: statusObj.timestamp
                 });
                 updated += result.modifiedCount;
               }
@@ -121,8 +119,8 @@ app.post('/api/process-payloads', async (req, res) => {
         }
       }
     }
-    // Add support for old format (if any)
-    if (data.type === 'message') {
+    // Old format support
+    if (data.type === 'message' && data.wa_id && data.name) {
       await Message.create({
         wa_id: data.wa_id,
         name: data.name,
@@ -152,7 +150,8 @@ app.listen(PORT, async () => {
     const files = fs.readdirSync(payloadDir).filter(f => f.endsWith('.json'));
     let inserted = 0, updated = 0;
     for (const file of files) {
-      const data = JSON.parse(fs.readFileSync(path.join(payloadDir, file)));
+      const data = safeReadJSON(path.join(payloadDir, file));
+      if (!data) continue;
       // WhatsApp webhook payloads
       if (data.payload_type === 'whatsapp_webhook' && data.metaData?.entry) {
         for (const entry of data.metaData.entry) {
@@ -164,11 +163,31 @@ app.listen(PORT, async () => {
                 updated += result.modifiedCount;
               }
             }
+            // Insert messages on startup too
+            if (change.field === 'messages' && change.value?.messages) {
+              for (const msgObj of change.value.messages) {
+                const wa_id = (change.value.contacts && change.value.contacts[0]?.wa_id) || '';
+                const name = (change.value.contacts && change.value.contacts[0]?.profile?.name) || '';
+                if (!wa_id || !name) continue;
+                const doc = {
+                  wa_id,
+                  name,
+                  id: msgObj.id,
+                  meta_msg_id: msgObj.id,
+                  text: msgObj.text?.body || '',
+                  timestamp: Number(msgObj.timestamp),
+                  status: msgObj.status || 'sent',
+                  fromMe: msgObj.fromMe || false,
+                };
+                await Message.create(doc);
+                inserted++;
+              }
+            }
           }
         }
       }
-      // Add support for old format (if any)
-      if (data.type === 'message') {
+      // Old format support
+      if (data.type === 'message' && data.wa_id && data.name) {
         await Message.create({
           wa_id: data.wa_id,
           name: data.name,
